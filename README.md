@@ -215,7 +215,7 @@ Save to local as default behaviour
 
 ### Best practices
 
-- Hashicorp recommends using provisioners as a last resourt, giving preference to try using inherent mechanism wihtin your infrastructure deployment to carry out custom tasks where possible.
+- Hashicorp recommends using provisioners as a last resort, giving preference to try using inherent mechanism wihtin your infrastructure deployment to carry out custom tasks where possible.
 - TF cannot track changes to provisioners.
 - if the cmd within a provisioner returns non-zero return code, it's considered failed and underlying resource is tainted.
 
@@ -300,3 +300,260 @@ resource "databricks_instance_pool" "nodes" {
     Tier    = join("-",["terraform", var.tier])
     UseCase = var.usecase
   }
+```
+
+```terraform
+> contains(["cesar", "slalom", 3,], "3")
+false
+> contains(["cesar", "slalom", 3,], 3)
+true
+>
+```
+
+## Terraform Type Constraints
+
+Terraform module authors and provider developers can use detailed type constraints to validate user-provided values for their input variables and resource arguments. This requires some additional knowledge about Terraform's type system, but allows you to build a more resilient user interface for your modules and resources.
+
+Primitive Types (number, string, bool)
+Complex Types (list, tuple, map, object)
+
+- **Collection** types allow multiple values of one primitive types to be grouped together (ex):
+  - list (type)
+  - map (type)
+  - set (type) 
+
+```terraform
+variable "collection" {
+  type = list(number)
+  default = [1,2,3]
+}
+```
+
+- **Structural** types allow multiple values of different primitive types to be grouped together
+
+```terraform
+variable "structural" {
+  type = object ({
+    vmname = string
+    vCPU   = number
+  })
+}
+```
+
+- **any** is a placeholder for a primitive type to have terraform match to the proper primitive type at the run time.
+
+```terraform
+variable "any" {
+  type = list(any)
+  default = [true, false, true]
+}
+```
+
+## Dynamic Blocks
+
+The goal is to have code cleaner by create code definition for repeatable nested configuration blocks inside of Terraform resources, can be used inside of data, provider, provisioner and resource blocks.
+
+```terraform
+variable "deploy_groups" {
+  description = "Group to apply policy"
+  type = list(string)
+  default = [DataOps, DataAdmin]
+}
+
+resource "databricks_permissions" "can_use_admin_pool_nodes" {
+  instance_pool_id  = databricks_instance_pool.nodes.id
+  dynamic "access_control" {
+    for_each = var.deploy_groups
+      content {
+        group_name       = access_control.key 
+        permission_level = "CAN_MANAGE"
+      }
+  }
+  ```
+
+Best practices recommends to use dynamic blocks wehn you need to hide details such as when you are writing terraform modules.
+
+## Terraform fmt, taint & import
+
+### fmt
+
+Formats Terraform code for readibility, best practices to use before pushing your code to version control  any time you made changes to the code.
+
+```terraform
+terraform fmt
+```
+
+### taint
+
+Taints a resource, forcint it to be destroyed and recreated by modifying the state file, which causes the recreation workflow after next terraform apply execution
+
+- Think about the dependencies when recreating a resourcer, ex External IP address on a VM
+
+Useful scenarios, cause a provisioners to run, replace misbehaving resources forcefully or mimic side effects of recreation not modeled by any attributes of the resource. (third pary calls post creation)
+
+```terraform
+terraform taint resource_address
+```
+
+### import
+
+Terraform is able to import existing infrastructure. This allows you take resources you've created by some other means and bring it under Terraform management.
+
+Maps existing resources to TF using an "ID", which is dependent of the underlying vendor (ex. Databricks WS ID, VM ID, etc.)
+
+Warning: Terraform expects that each remote object it is managing will be bound to only one resource address, which is normally guaranteed by Terraform itself having created all objects.
+
+```terraform
+terraform import resource_address ID
+```
+
+Useful cases could be when you are not in control of creation process of infrastructure and you are allow to manage them once are created.
+
+### Terraform configuration blocks
+
+Allows you to configure backend for storing state files, specifying TF version or TF provider version, enable TF experimental features, pass metadata to providers.
+
+```terraform
+terraform {
+  required_verion = ">=0.13.0"
+  required_providers {
+    databricks = {
+      source = "databrickslabs/databricks"
+      version = ">=0.3.2"
+    }
+  }
+}
+```
+
+## Terraform Workspaces (CLI)
+
+- Terraform Workspaces are alternate state files within the same working directory
+- By default Terraform provides a single workpace that is called default. This Workspace cannot be deleted.
+
+```terraform
+terraform workspace new/select <workspace-name>
+```
+
+Useful scenarios:, test changes using a parallel, distinct copy of infra (high cost), separate your different environments (PROD, DEV, ETC)
+
+```terraform
+resource "azurerm_linux_virtual_machine" "example" {
+  count = terraform.workspace == "default" ? 5 : 1
+  # ... other arguments
+}
+```
+
+```terraform
+resource "databricks_instance_pool" "nodes" {
+  instance_pool_name = "DBSIP-${var.pooltype}-${var.lob}-${var.tier}"
+  min_idle_instances = var.minidleinstances
+  max_capacity       = var.maxcapacity
+  node_type_id       = var.nodetypeid
+  idle_instance_autotermination_minutes = var.idleautotermmin
+  custom_tags = {
+    LOB        = var.lob
+    UseCase    = var.usecase
+    Enviroment = ${terraform.workspace}
+  }
+
+  azure_attributes {}
+
+  # Ignore attributes that are set by Azure for spot instances, these are causing update issues
+  lifecycle {
+    ignore_changes = [
+      azure_attributes,
+    ]
+  }
+}
+```
+
+## Terraform Debugging
+
+Terraform uses environment variables to manipulate logging
+
+### **TF_LOG** 
+
+For enabling verbose logging. By default, it will send logs to stderr. The variable can be set to TRACE, DEBUG, INFO, WARN, ERROR. Being trace the most verbose level.
+
+### **TF_LOG_PATH**
+
+Persists logged output to an specifing file, giving a path.
+
+```bash
+export TF_LOG=TRACE
+export TF_LOG_PATH=./terraform.log
+```
+
+## Terraform Cloud and Enterprise
+
+### Hashicorp Sentinel - Policy as Code
+
+- Enforces policies on your code using Sentinel language. It is trigger at the Terraform Plan command. 
+
+Useful cases
+
+- Organization policies for resource quotas
+- Organization security policies
+
+```sentinel
+# This policy uses the Sentinel tfplan/v2 import to require that
+# specified Azure resources have all mandatory tags
+
+# Import common-functions/tfplan-functions/tfplan-functions.sentinel
+# with alias "plan"
+import "tfplan-functions" as plan
+
+# Import azure-functions/azure-functions.sentinel
+# with alias "azure"
+import "azure-functions" as azure
+
+# List of Azure resources that are required to have name/value tags.
+param resource_types default [
+  "azurerm_resource_group",
+  "azurerm_virtual_machine",
+  "azurerm_linux_virtual_machine",
+  "azurerm_windows_virtual_machine",
+  "azurerm_virtual_network",
+]
+
+# List of mandatory tags
+param mandatory_tags default ["environment"]
+
+# Get all Azure Resources with standard tags
+allAzureResourcesWithStandardTags =
+                        azure.find_resources_with_standard_tags(resource_types)
+
+# Filter to Azure resources with violations using azurerm_virtual_machine
+# Warnings will be printed for all violations since the last parameter is true
+violatingAzureResources =
+      plan.filter_attribute_not_contains_list(allAzureResourcesWithStandardTags,
+                    "tags", mandatory_tags, true)
+
+
+# Main rule
+main = rule {
+  length(violatingAzureResources["messages"]) is 0
+}
+```
+
+## Terraform Vault
+
+- Hashicorp Vault (secrets management software)
+  - Dynamically provisions credentials and rotates them
+  - Encrypts sensitive data in transit and at rest and provides fine-grained access to secrets using ACLs
+
+1. Vault Admin stores long-lived credentials in Vault, configures permissions for temporary credentials when generated
+
+2. Terraform operator integrate Vault using vault provider
+
+3. At runtime TF reaches vault for temporary credentials
+
+4. Vault returns temporary, short-lived credentials
+
+5. Terraform deploys using the credentials returned by Vault and after a configurable amount of time, those temp credentials are deleted by Vault
+
+## Terraform Registry
+
+- A repository of publicly available Terraform providers and modules.
+
+
