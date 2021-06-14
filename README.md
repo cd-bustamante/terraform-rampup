@@ -554,6 +554,27 @@ main = rule {
 
 ## Terraform Registry
 
-- A repository of publicly available Terraform providers and modules.
+- A repository of publicly available Terraform providers and modules. You can publish and share your own modules
 
+## Terraform Cloud Workspaces
 
+- Directories hosted in Terraform Cloud
+- Sotres old versions of state files by default
+- Maintains a record of all execution activity
+- You can trigger deployments via Workspaces API or system control versions systems with Git hub actions or Azure DevOps pipeline
+
+|Component|Workspace|Cloud Workspace
+--- | --- | ---
+Terraform Configuration | On disk | In linked version control repository or periodically uploaded via API/CLI
+Variable Values | As .tfvars files, as CLI arguments or in shell environment | In woorkspace (in Terraform Cloud)
+State | On disk or in remote backend | In workspace (in terraform Cloud)
+Credentials and secrets | In shell environments or entered at prompts | In workspace (Terrafrom Cloud), stored as sensitive variables.
+
+- Collaboration oriented Terraform Workflow:
+
+Remote Terraform execution
+Workspace based org model
+VErsion control integration
+Remote State management and CLI integration
+Private Terraform Module registry
+Cost estimation and Sentinel integration features
